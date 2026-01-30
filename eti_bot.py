@@ -3,7 +3,7 @@
 """
 ETI MUTLU KUTU - PYTHONANYWHERE VERSION v3.0
 - PythonAnywhere uyumlu (Selenium yok, sadece VDS kontrolü)
-- VDS: 194.62.55.201:8080
+- VDS: 194.62.55.201:8080 
 - Always-on task desteği
 - Web panel + Telegram bot
 """
@@ -54,7 +54,7 @@ class Config:
     BOT_TOKEN: str = "8182630877:AAFtGjtxYv0dqQAGnziaBnaf-GrrI0sPzdk"
     
     # VDS Ayarları
-    VDS_SERVER_URL: str = "http://194.62.55.201:8080"
+    VDS_URL = "http://194.62.55.201:8080"
     MAX_VDS_WORKERS: int = 4
     
     # API Bilgileri (VDS üzerinden çalışacak)
@@ -792,3 +792,4 @@ if Flask and __name__ != '__main__':
 if __name__ == '__main__':
 
     main()
+
