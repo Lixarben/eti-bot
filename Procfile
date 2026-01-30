@@ -1,1 +1,1 @@
-worker: python eti_bot.py
+web: python eti_bot.py
