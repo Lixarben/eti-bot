@@ -74,7 +74,7 @@ class Config:
     
     # Debug
     DEBUG_MODE: bool = True
-    LOG_FILE: str = "/home/yourusername/eti_bot.log"  # PythonAnywhere path'i güncelle!
+    LOG_FILE: str = "/tmp/eti_bot.log"  # PythonAnywhere path'i güncelle!
 
 CONFIG = Config()
 
@@ -790,4 +790,5 @@ if Flask and __name__ != '__main__':
     application = app
 
 if __name__ == '__main__':
+
     main()
