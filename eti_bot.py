@@ -1,341 +1,217 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-ETI MUTLU KUTU - VDS TELEGRAM BOT v2.0
-Railway için optimize edilmiş versiyon
+ETI BOT - Railway için Basit Versiyon
 """
 
 import os
 import sys
-import threading
 import time
-import json
-import signal
-from typing import Optional, Dict, List
-from datetime import datetime
+import requests
+import telebot
+from flask import Flask, jsonify
+import threading
 
-# Önce dependency kontrolü
-print("📦 Paketler kontrol ediliyor...")
+print("="*60)
+print("🚀 ETI BOT BAŞLATILIYOR...")
+print("="*60)
 
-try:
-    import telebot
-    from telebot import types
-    import requests
-    from flask import Flask, request, jsonify
-    print("✅ Tüm paketler yüklü")
-except ImportError as e:
-    print(f"❌ Eksik paket: {e}")
-    print("📦 Kurulum: pip install telebot requests flask")
-    sys.exit(1)
-
-# ═══════════════════════════════════════════════════════════
-# KONFİGÜRASYON
-# ═══════════════════════════════════════════════════════════
-
-print("⚙️  Konfigürasyon yükleniyor...")
-
-# Environment variables kontrolü
+# 1. BOT TOKEN KONTROLÜ
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-VDS_SERVER_URL = os.environ.get("VDS_SERVER_URL", "http://194.62.55.201:8080")
-DEBUG_MODE = os.environ.get("DEBUG_MODE", "True").lower() == "true"
-PORT = int(os.environ.get("PORT", 8080))
-RAILWAY_PUBLIC_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
 
-# BOT_TOKEN zorunlu kontrolü
 if not BOT_TOKEN:
     print("❌ HATA: BOT_TOKEN bulunamadı!")
-    print("ℹ️  Railway'de Variables sekmesine git ve ekle:")
-    print("   Name: BOT_TOKEN")
-    print("   Value: 7968457283:AAG-8tILmgVJvZmKv8m5DMUwX6x7aF3kYeg")
-    print("⏳ 10 saniye sonra kapanıyor...")
-    time.sleep(10)
+    print("")
+    print("📋 RAILWAY'DE AYARLA:")
+    print("1. Railway dashboard'a git")
+    print("2. Projeni seç")
+    print("3. 'Variables' sekmesine tıkla")
+    print("4. 'New Variable' butonuna tıkla")
+    print("5. Name: BOT_TOKEN")
+    print("6. Value: 7968457283:AAG-8tILmgVJvZmKv8m5DMUwX6x7aF3kYeg")
+    print("7. 'Add' butonuna tıkla")
+    print("8. 'Redeploy' butonuna tıkla")
+    print("")
+    print("⏳ 30 saniye bekleyip kapanıyor...")
+    time.sleep(30)
     sys.exit(1)
 
 print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...")
-print(f"📍 VDS Server: {VDS_SERVER_URL}")
-print(f"🐞 Debug: {DEBUG_MODE}")
+
+# 2. DİĞER AYARLAR
+VDS_URL = os.environ.get("VDS_SERVER_URL", "http://194.62.55.201:8080")
+DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
+PORT = int(os.environ.get("PORT", 8080))
+
+print(f"📍 VDS Server: {VDS_URL}")
+print(f"🐞 Debug: {DEBUG}")
 print(f"🌐 Port: {PORT}")
+print("="*60)
 
-# ═══════════════════════════════════════════════════════════
-# DEBUG UTILS
-# ═══════════════════════════════════════════════════════════
-
-def debug_log(msg: str, level: str = "INFO"):
-    """Debug mesajı"""
-    if DEBUG_MODE:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] [{level}] {msg}")
-
-# ═══════════════════════════════════════════════════════════
-# BOT INIT
-# ═══════════════════════════════════════════════════════════
-
-print("🤖 Bot başlatılıyor...")
+# 3. BOT'U OLUŞTUR
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
-    print("✅ Bot başarıyla oluşturuldu")
+    print("🤖 Bot başarıyla oluşturuldu")
 except Exception as e:
     print(f"❌ Bot oluşturulamadı: {e}")
     sys.exit(1)
 
-# ═══════════════════════════════════════════════════════════
-# STATE MANAGEMENT
-# ═══════════════════════════════════════════════════════════
-
-class BotState:
-    def __init__(self):
-        self.user_states = {}
-        self.user_data = {}
-        self.active_jobs = {}
-        self.job_lock = threading.Lock()
-    
-    def set_state(self, user_id: int, state: str):
-        self.user_states[user_id] = state
-    
-    def get_state(self, user_id: int) -> Optional[str]:
-        return self.user_states.get(user_id)
-    
-    def clear_state(self, user_id: int):
-        if user_id in self.user_states:
-            del self.user_states[user_id]
-        if user_id in self.user_data:
-            del self.user_data[user_id]
-    
-    def set_data(self, user_id: int, key: str, value):
-        if user_id not in self.user_data:
-            self.user_data[user_id] = {}
-        self.user_data[user_id][key] = value
-    
-    def get_data(self, user_id: int, key: str, default=None):
-        return self.user_data.get(user_id, {}).get(key, default)
-    
-    def has_active_job(self, user_id: int) -> bool:
-        with self.job_lock:
-            return user_id in self.active_jobs
-    
-    def set_active_job(self, user_id: int, job_data: dict):
-        with self.job_lock:
-            self.active_jobs[user_id] = job_data
-    
-    def get_active_job(self, user_id: int) -> Optional[dict]:
-        with self.job_lock:
-            return self.active_jobs.get(user_id)
-    
-    def remove_active_job(self, user_id: int):
-        with self.job_lock:
-            if user_id in self.active_jobs:
-                del self.active_jobs[user_id]
-
-bot_state = BotState()
-
-# ═══════════════════════════════════════════════════════════
-# VDS CLIENT
-# ═══════════════════════════════════════════════════════════
-
-class VDSClient:
-    def __init__(self):
-        self.base_url = VDS_SERVER_URL
-        self.timeout = 30
-    
-    def check_status(self) -> bool:
-        """VDS server çalışıyor mu kontrol et"""
-        try:
-            debug_log(f"VDS kontrol: {self.base_url}", "VDS")
-            response = requests.get(f"{self.base_url}/health", timeout=5)
-            debug_log(f"VDS cevap: {response.status_code}", "VDS")
-            return response.status_code == 200
-        except Exception as e:
-            debug_log(f"VDS bağlantı hatası: {e}", "VDS")
+# 4. VDS TEST FONKSİYONU
+def test_vds():
+    try:
+        print(f"🔍 VDS test ediliyor: {VDS_URL}")
+        response = requests.get(f"{VDS_URL}/health", timeout=5)
+        if response.status_code == 200:
+            print("✅ VDS Server: ÇALIŞIYOR")
+            return True
+        else:
+            print(f"⚠️ VDS Server: HATA ({response.status_code})")
             return False
-    
-    def kayit_yap(self, davet_kodu: str) -> dict:
-        """VDS server'a kayıt isteği gönder"""
-        try:
-            url = f"{self.base_url}/kayit"
-            data = {"davet_kodu": davet_kodu}
-            
-            debug_log(f"VDS istek: {davet_kodu}", "VDS")
-            
-            response = requests.post(url, json=data, timeout=self.timeout)
-            result = response.json()
-            
-            debug_log(f"VDS cevap: {result}", "VDS")
-            return result
-            
-        except Exception as e:
-            debug_log(f"VDS hatası: {str(e)}", "VDS")
-            return {"success": False, "error": str(e)}
+    except Exception as e:
+        print(f"❌ VDS Server: BAĞLANAMADI - {e}")
+        return False
 
-# ═══════════════════════════════════════════════════════════
-# TELEGRAM HANDLERS - BASİT VERSİYON
-# ═══════════════════════════════════════════════════════════
-
+# 5. TELEGRAM KOMUTLARI
 @bot.message_handler(commands=['start'])
-def start_command(message):
-    user_id = message.from_user.id
-    debug_log(f"User {user_id}: /start", "TELEGRAM")
+def start_cmd(message):
+    vds_status = "✅ ÇALIŞIYOR" if test_vds() else "❌ KAPALI"
     
-    vds_client = VDSClient()
-    
-    msg = "🤖 *ETI MUTLU KUTU BOT* 🚀\n\n"
-    msg += "📍 *VDS Modu Aktif*\n"
-    msg += f"🔗 Server: `{VDS_SERVER_URL}`\n\n"
-    
-    if vds_client.check_status():
-        msg += "✅ *VDS Bağlantısı:* Aktif\n\n"
-        msg += "📝 Kullanım:\n"
-        msg += "1. Davet kodunu gönder\n"
-        msg += "2. Kaç adet istediğini yaz\n"
-        msg += "3. Bot otomatik çalışır\n\n"
-        msg += "Örnek kod: `8701545434`"
-    else:
-        msg += "❌ *VDS Bağlantısı:* Kapalı\n"
-        msg += "Sunucuya bağlanılamıyor!\n"
-        msg += f"URL: {VDS_SERVER_URL}"
-    
+    msg = f"""
+🤖 *ETİ MUTLU KUTU BOT*
+
+📍 *VDS Server:* {VDS_URL}
+📡 *Durum:* {vds_status}
+
+📋 *Komutlar:*
+/start - Bu mesajı göster
+/test - VDS bağlantı testi
+/durum - Sistem durumu
+/yardim - Yardım menüsü
+
+⚡ Bot hazır! Davet kodunu gönder.
+"""
     bot.reply_to(message, msg, parse_mode='Markdown')
 
 @bot.message_handler(commands=['test'])
-def test_command(message):
-    user_id = message.from_user.id
-    debug_log(f"User {user_id}: /test", "TELEGRAM")
-    
-    vds_client = VDSClient()
-    
-    if vds_client.check_status():
+def test_cmd(message):
+    if test_vds():
         bot.reply_to(message, "✅ *VDS SERVER ÇALIŞIYOR!*", parse_mode='Markdown')
     else:
         bot.reply_to(message, "❌ *VDS SERVER KAPALI!*", parse_mode='Markdown')
 
 @bot.message_handler(commands=['durum'])
-def status_command(message):
-    user_id = message.from_user.id
+def status_cmd(message):
+    import datetime
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    msg = "📊 *SİSTEM DURUMU*\n\n"
-    msg += f"🤖 Bot: Çalışıyor\n"
-    msg += f"📍 VDS: {VDS_SERVER_URL}\n"
-    msg += f"👤 Kullanıcı ID: {user_id}\n"
-    msg += f"🕐 Zaman: {datetime.now().strftime('%H:%M:%S')}"
-    
+    msg = f"""
+📊 *SİSTEM DURUMU*
+
+🤖 Bot: ÇALIŞIYOR
+📍 VDS: {VDS_URL}
+👤 Kullanıcı: {message.from_user.id}
+🕐 Zaman: {now}
+🚀 Railway: Aktif
+"""
     bot.reply_to(message, msg, parse_mode='Markdown')
 
-@bot.message_handler(commands=['yardim', 'help'])
-def help_command(message):
-    msg = "📋 *KOMUT LİSTESİ*\n\n"
-    msg += "• /start - Botu başlat\n"
-    msg += "• /test - VDS bağlantı testi\n"
-    msg += "• /durum - Sistem durumu\n"
-    msg += "• /yardim - Bu mesaj\n\n"
-    msg += "📍 *VDS URL:* " + VDS_SERVER_URL
+@bot.message_handler(commands=['yardim'])
+def help_cmd(message):
+    msg = """
+📋 *YARDIM MENÜSÜ*
+
+• /start - Botu başlat
+• /test - VDS bağlantı testi
+• /durum - Sistem durumu
+• /yardim - Bu mesaj
+
+📝 *Kullanım:*
+1. Davet kodunu gönder (örn: 8701545434)
+2. Kaç adet istediğini yaz
+3. Bot işlemi başlatır
+
+📍 *VDS URL:* """ + VDS_URL
     
     bot.reply_to(message, msg, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    user_id = message.from_user.id
+def handle_text(message):
     text = message.text.strip()
     
-    debug_log(f"User {user_id} mesaj: {text[:50]}", "TELEGRAM")
-    
     if text.isdigit() and len(text) == 10:
-        # Davet kodu gibi görünüyor
-        bot.reply_to(message, f"🎯 Kod alındı: `{text}`\n\nKaç adet istiyorsun? (1-100)", parse_mode='Markdown')
+        bot.reply_to(message, f"🎯 *Kod alındı:* `{text}`\n\nKaç adet istiyorsun? (1-100)", parse_mode='Markdown')
     elif text.isdigit() and 1 <= int(text) <= 100:
-        # Adet bilgisi
-        bot.reply_to(message, f"✅ {text} adet kayıt başlatılıyor...\n\n⚡ VDS sunucusuna istek gönderiliyor.", parse_mode='Markdown')
+        bot.reply_to(message, f"✅ *{text} adet* kayıt başlatılıyor...\n\n⚡ VDS sunucusuna istek gönderiliyor.", parse_mode='Markdown')
     else:
-        bot.reply_to(message, "❓ Anlamadım. /yardim yazarak komutları görebilirsin.", parse_mode='Markdown')
+        bot.reply_to(message, "🤔 Anlamadım. /yardim yazarak yardım alabilirsin.", parse_mode='Markdown')
 
-# ═══════════════════════════════════════════════════════════
-# FLASK APP FOR RAILWAY
-# ═══════════════════════════════════════════════════════════
-
+# 6. FLASK WEB SERVER (Railway Health Check için)
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return jsonify({
         "status": "online",
-        "service": "ETI Mutlu Kutu Bot",
-        "vds_server": VDS_SERVER_URL,
-        "timestamp": datetime.now().isoformat()
+        "service": "ETI Bot",
+        "bot": "running",
+        "vds_url": VDS_URL,
+        "timestamp": time.time()
     })
 
 @app.route('/health')
 def health():
-    vds_client = VDSClient()
-    vds_status = vds_client.check_status()
-    
+    vds_ok = test_vds()
     return jsonify({
         "bot": "running",
-        "vds_connection": vds_status,
+        "vds_connection": vds_ok,
         "uptime": time.time() - start_time
     })
 
-# ═══════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════
-
-start_time = time.time()
-
-def run_flask():
-    """Flask server'ı başlat"""
-    debug_log(f"Flask başlatılıyor: 0.0.0.0:{PORT}", "WEB")
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+# 7. ANA FONKSİYONLAR
+def run_web():
+    """Web server'ı başlat"""
+    print(f"🌐 Web server başlatılıyor: 0.0.0.0:{PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
 def run_bot():
     """Telegram bot'u başlat"""
-    debug_log("Bot polling başlatılıyor...", "BOT")
-    
-    # Webhook'u temizle (önceki instance'lardan kalma)
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-    except:
-        pass
-    
-    # Long polling başlat
+    print("🤖 Telegram bot başlatılıyor...")
     while True:
         try:
-            debug_log("Polling başlatılıyor...", "BOT")
             bot.polling(none_stop=True, timeout=30)
         except Exception as e:
-            debug_log(f"Polling hatası: {e}", "ERROR")
+            print(f"⚠️ Bot hatası: {e}")
             time.sleep(5)
+
+# 8. MAIN
+start_time = time.time()
 
 def main():
     print("\n" + "="*60)
-    print("🤖 ETI MUTLU KUTU BOT - RAILWAY EDITION")
+    print("🚀 SİSTEM BAŞLATILIYOR...")
     print("="*60)
-    print(f"🔧 Bot Token: {BOT_TOKEN[:10]}...")
-    print(f"📍 VDS Server: {VDS_SERVER_URL}")
-    print(f"🌐 Port: {PORT}")
-    print(f"🐞 Debug: {DEBUG_MODE}")
-    print("="*60)
-    print("🚀 Başlatılıyor...")
     
     # VDS test
-    vds_client = VDSClient()
-    if vds_client.check_status():
-        print("✅ VDS Server: Bağlantı başarılı")
-    else:
-        print("⚠️  VDS Server: Bağlantı yok")
+    test_vds()
     
     # Thread'leri başlat
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    web_thread = threading.Thread(target=run_web, daemon=True)
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     
-    flask_thread.start()
-    time.sleep(2)
+    web_thread.start()
+    time.sleep(2)  # Web server'ın başlaması için bekle
     bot_thread.start()
     
-    # Ana thread'i bekle
+    print("✅ Tüm servisler başlatıldı!")
+    print("="*60)
+    print("📱 Telegram'da botunuzu kullanabilirsiniz")
+    print("="*60)
+    
+    # Ana thread'i çalışır tut
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n🛑 Bot durduruluyor...")
-        sys.exit(0)
 
 if __name__ == "__main__":
     main()
