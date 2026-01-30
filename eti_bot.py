@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 ETI MUTLU KUTU - VDS TELEGRAM BOT v2.0 (Railway Uyumlu)
-- Sadece VDS modu destekler
-- Local mod kaldırıldı (Chrome/ChromeDriver gerektirmez)
-- Railway ortamı için optimize edildi
+- Single instance için optimize edildi
+- Webhook polling desteği
 """
 
 import threading
@@ -36,10 +35,17 @@ import requests
 @dataclass
 class Config:
     # Telegram Bot
-    BOT_TOKEN: str = os.environ.get("BOT_TOKEN", "8182630877:AAFtGjtxYv0dqQAGnziaBnaf-GrrI0sPzdk")
+    BOT_TOKEN: str = os.environ.get("7968457283:AAG-8tILmgVJvZmKv8m5DMUwX6x7aF3kYeg")
+    
+    # Railway Settings
+    RAILWAY_ENVIRONMENT: bool = os.environ.get("RAILWAY_ENVIRONMENT", "True").lower() == "true"
+    RAILWAY_PUBLIC_DOMAIN: str = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    
+    # Webhook Settings
+    USE_WEBHOOK: bool = os.environ.get("USE_WEBHOOK", "True").lower() == "true"
+    WEBHOOK_PORT: int = int(os.environ.get("PORT", 8080))
     
     # VDS Ayarları
-    USE_VDS: bool = True  # Railway'de sadece VDS modu
     VDS_SERVER_URL: str = os.environ.get("VDS_SERVER_URL", "http://194.62.55.201:8080")
     MAX_VDS_WORKERS: int = 4
     
@@ -51,14 +57,12 @@ class Config:
     
     # Zaman Ayarları
     SMS_TIMEOUT: float = 25.0
-    PAGE_TIMEOUT: int = 20
     
     # Worker Limits
     MAX_CODES: int = 8
     
     # Debug
     DEBUG_MODE: bool = os.environ.get("DEBUG_MODE", "True").lower() == "true"
-    PORT: int = int(os.environ.get("PORT", 8080))
 
 CONFIG = Config()
 
@@ -697,10 +701,10 @@ def default_handler(message):
     bot.reply_to(message, "❓ *Bilinmeyen komut!*\n\n/yardim yazarak kullanımı öğrenebilirsin.", parse_mode='Markdown')
 
 # ═══════════════════════════════════════════════════════════
-# HEALTH CHECK ENDPOINT
+# WEBHOOK ve HEALTH CHECK
 # ═══════════════════════════════════════════════════════════
 
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
@@ -718,14 +722,35 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     })
 
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Telegram webhook endpoint"""
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    return 'Bad request', 400
+
+def set_webhook():
+    """Webhook'u ayarla"""
+    if CONFIG.RAILWAY_PUBLIC_DOMAIN:
+        webhook_url = f"https://{CONFIG.RAILWAY_PUBLIC_DOMAIN}/webhook"
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=webhook_url)
+        debug_log(f"Webhook set to: {webhook_url}", "WEBHOOK")
+        return True
+    return False
+
+def run_polling():
+    """Long polling başlat"""
+    debug_log("Long polling başlatılıyor...", "BOT")
+    bot.polling(none_stop=True, timeout=30, long_polling_timeout=30)
+
 # ═══════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════
-
-def run_flask():
-    """Flask server'ı başlat"""
-    debug_log(f"Flask server başlatılıyor (PORT: {CONFIG.PORT})", "SYSTEM")
-    app.run(host='0.0.0.0', port=CONFIG.PORT)
 
 def main():
     print("="*70)
@@ -737,9 +762,11 @@ def main():
     print(f"⚙️ SMS Timeout: {CONFIG.SMS_TIMEOUT}s")
     print(f"⚙️ Max VDS Workers: {CONFIG.MAX_VDS_WORKERS}")
     print(f"⚙️ Max Kod: {CONFIG.MAX_CODES}")
-    print(f"🌐 Site: https://etimutlukutu.com")
     print(f"🐞 Debug Mode: {CONFIG.DEBUG_MODE}")
-    print(f"🌐 Health Check: http://localhost:{CONFIG.PORT}")
+    print(f"🌐 Webhook: {CONFIG.USE_WEBHOOK}")
+    
+    if CONFIG.RAILWAY_PUBLIC_DOMAIN:
+        print(f"🌐 Public Domain: {CONFIG.RAILWAY_PUBLIC_DOMAIN}")
     print("="*70)
     
     # VDS kontrolü
@@ -757,10 +784,9 @@ def main():
     
     print("\n🚀 Bot başlatılıyor...")
     print("📞 Komutlar: /start, /bilgi, /stop, /vds_test, /yardim")
-    print("💬 Telegram'dan botunuza mesaj atarak başlatabilirsiniz")
     print("="*70)
     
-    # Signal handler (Ctrl+C)
+    # Signal handler
     def signal_handler(sig, frame):
         print("\n\n🛑 Bot durduruluyor...")
         # Aktif tüm job'ları durdur
@@ -768,16 +794,50 @@ def main():
             job = bot_state.get_active_job(user_id)
             if job:
                 job.stop()
+        
+        # Webhook'u kaldır
+        if CONFIG.USE_WEBHOOK:
+            bot.remove_webhook()
+        
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Flask server'ı thread'te başlat
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
     try:
-        bot.polling(timeout=30, long_polling_timeout=30)
+        if CONFIG.USE_WEBHOOK and CONFIG.RAILWAY_PUBLIC_DOMAIN:
+            # Webhook modu
+            debug_log("Webhook modu başlatılıyor...", "SYSTEM")
+            set_webhook()
+            
+            # Flask server'ı başlat
+            debug_log(f"Flask server başlatılıyor (PORT: {CONFIG.WEBHOOK_PORT})", "SYSTEM")
+            app.run(host='0.0.0.0', port=CONFIG.WEBHOOK_PORT)
+        else:
+            # Long polling modu (single instance için)
+            debug_log("Long polling modu başlatılıyor...", "SYSTEM")
+            
+            # Önce webhook var mı kontrol et ve kaldır
+            bot.remove_webhook()
+            time.sleep(2)
+            
+            # Health check için basit thread
+            def simple_health_check():
+                from flask import Flask
+                health_app = Flask(__name__)
+                
+                @health_app.route('/')
+                def health():
+                    return jsonify({"status": "ok", "bot": "running"})
+                
+                health_app.run(host='0.0.0.0', port=CONFIG.WEBHOOK_PORT)
+            
+            # Health check thread'i başlat
+            health_thread = threading.Thread(target=simple_health_check, daemon=True)
+            health_thread.start()
+            
+            # Polling başlat
+            run_polling()
+            
     except Exception as e:
         print(f"❌ Bot hatası: {e}")
         import traceback
@@ -785,7 +845,7 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    # requests paketini kontrol et
+    # Gerekli paketleri kontrol et
     try:
         import requests
     except ImportError:
@@ -793,9 +853,8 @@ if __name__ == "__main__":
         print("📦 Kurulum: pip install requests")
         sys.exit(1)
     
-    # flask paketini kontrol et
     try:
-        from flask import Flask, jsonify
+        from flask import Flask, request, jsonify
     except ImportError:
         print("❌ 'flask' paketi kurulu değil!")
         print("📦 Kurulum: pip install flask")
