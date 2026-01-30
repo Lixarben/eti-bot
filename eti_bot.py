@@ -25,7 +25,7 @@ except ImportError:
 
 # KONFIGURASYON
 BOT_TOKEN = "8182630877:AAFtGjtxYv0dqQAGnziaBnaf-GrrI0sPzdk"
-VDS_URL = "http://194.62.55.201:8080"
+VDS_URL = "https://bbfd1ecfe19e91f9-194-62-55-201.serveousercontent.com"
 
 # Logging
 logging.basicConfig(
@@ -210,3 +210,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
